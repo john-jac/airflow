@@ -289,13 +289,11 @@ class RedshiftDataHook(AwsBaseHook):
         :type db_user: str
         :param parameters: the parameters for the SQL statement
         :type parameters: list
-        :param secret_arn: the name or ARN of the secret that enables access
-        to the database.
+        :param secret_arn: the name or ARN of the secret that enables db access
         :type secret_arn: str
         :param statement_name: the name of the SQL statement
         :type statement_name: str
-        :param with_event: indicates whether to send an event to the Amazon
-        EventBridge event bus after the SQL statement runs
+        :param with_event: indicates whether to send an event to EventBridge
         :type with_event: bool
 
         """
@@ -351,8 +349,7 @@ class RedshiftDataHook(AwsBaseHook):
 
         :param id: the identifier of the SQL statement to describe.
         :type id: str
-        :param next_token: a value that indicates the starting point for the next
-        set of response records in a subsequent request
+        :param next_token: a value that indicates the starting point for the next set of response records
         :type next_token: str
 
         """
