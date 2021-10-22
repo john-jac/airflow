@@ -19,8 +19,7 @@ from datetime import datetime, timedelta
 from os import getenv
 from time import sleep
 
-from airflow import DAG
-from airflow.decorators import task
+from airflow.decorators import dag, task
 from airflow.exceptions import AirflowException
 from airflow.providers.amazon.aws.hooks.redshift import RedshiftDataHook
 
@@ -43,67 +42,64 @@ POLL_INTERVAL = 10
 TIMEOUT = 600
 
 
-@task(task_id="execute_query")
-def execute_query_fn():
-    """This is a python callback that executes a Redshift query"""
-    hook = RedshiftDataHook()
-
-    resp = hook.execute_statement(
-        cluster_identifier=REDSHIFT_CLUSTER_IDENTIFIER,
-        database=REDSHIFT_DATABASE,
-        db_user=REDSHIFT_DATABASE_USER,
-        sql=REDSHIFT_QUERY,
-    )
-    return resp
-
-
-@task(task_id="wait_for_results")
-def wait_for_results_fn(id):
-    """This is a python callback that executes a Redshift query"""
-    hook = RedshiftDataHook()
-
-    elapsed = 0
-    while elapsed < TIMEOUT:
-        print("Polling", id)
-        status = hook.describe_statement(
-            id=id,
-        )
-        print(status)
-        if status == 'FINISHED':
-            return status
-        elif status == 'FAILED':
-            raise ValueError(f"RedshiftDataHook.describe_statement {status}")
-        elif status == 'ABORTED':
-            raise ValueError(f"Query {status}")
-        else:
-            print(f"Query {status}")
-        sleep(POLL_INTERVAL)
-        elapsed = elapsed + POLL_INTERVAL
-
-    raise AirflowException("Timeout. The operation could not be completed within the allotted time.")
-
-
-@task(task_id="output_results")
-def output_results_fn(id):
-    """This is a python callback that returns a Redshift query"""
-    hook = RedshiftDataHook()
-
-    resp = hook.get_statement_result(
-        id=id,
-    )
-    print(resp)
-    return resp
-
-
-with DAG(
+# [START howto_redshift_data]
+@dag(
     dag_id='example_redshift_data',
     schedule_interval=None,
     start_date=datetime(2021, 1, 1),
     dagrun_timeout=timedelta(minutes=60),
     tags=['example'],
     catchup=False,
-) as dag:
-    # [START howto_redshift_data]
+)
+def example_redshift_data():
+    @task(task_id="execute_query")
+    def execute_query_fn():
+        """This is a python decorator task that executes a Redshift query"""
+        hook = RedshiftDataHook()
+
+        resp = hook.execute_statement(
+            cluster_identifier=REDSHIFT_CLUSTER_IDENTIFIER,
+            database=REDSHIFT_DATABASE,
+            db_user=REDSHIFT_DATABASE_USER,
+            sql=REDSHIFT_QUERY,
+        )
+        return resp
+
+    @task(task_id="wait_for_results")
+    def wait_for_results_fn(id):
+        """This is a python decorator task that executes a Redshift query"""
+        hook = RedshiftDataHook()
+
+        elapsed = 0
+        while elapsed < TIMEOUT:
+            print("Polling", id)
+            status = hook.describe_statement(
+                id=id,
+            )
+            print(status)
+            if status == 'FINISHED':
+                return status
+            elif status == 'FAILED':
+                raise ValueError(f"RedshiftDataHook.describe_statement {status}")
+            elif status == 'ABORTED':
+                raise ValueError(f"Query {status}")
+            else:
+                print(f"Query {status}")
+            sleep(POLL_INTERVAL)
+            elapsed = elapsed + POLL_INTERVAL
+
+        raise AirflowException("Timeout. The operation could not be completed within the allotted time.")
+
+    @task(task_id="output_results")
+    def output_results_fn(id):
+        """This is a python decorator task that returns a Redshift query"""
+        hook = RedshiftDataHook()
+
+        resp = hook.get_statement_result(
+            id=id,
+        )
+        print(resp)
+        return resp
 
     # Using a task-decorated function to request the list of tables in a Redshift cluster
     redshift_query = execute_query_fn()
@@ -115,4 +111,7 @@ with DAG(
     redshift_output = output_results_fn(redshift_query)
 
     redshift_query >> redshift_wait >> redshift_output
-    # [END howto_redshift_data]
+
+
+example_redshift_data_dag = example_redshift_data()
+# [END howto_redshift_data]
