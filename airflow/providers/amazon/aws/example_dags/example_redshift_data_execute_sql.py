@@ -17,11 +17,10 @@
 
 from datetime import datetime, timedelta
 from os import getenv
-from time import sleep
 
 from airflow.decorators import dag, task
-from airflow.exceptions import AirflowException
-from airflow.providers.amazon.aws.hooks.redshift import RedshiftDataHook
+from airflow.providers.amazon.aws.hooks.redshift_data import RedshiftDataHook
+from airflow.providers.amazon.aws.operators.redshift_data import RedshiftDataOperator
 
 # [START howto_operator_redshift_data_env_variables]
 REDSHIFT_CLUSTER_IDENTIFIER = getenv("REDSHIFT_CLUSTER_IDENTIFIER", "test-cluster")
@@ -52,44 +51,6 @@ TIMEOUT = 600
     catchup=False,
 )
 def example_redshift_data():
-    @task(task_id="execute_query")
-    def execute_query_fn():
-        """This is a python decorator task that executes a Redshift query"""
-        hook = RedshiftDataHook()
-
-        resp = hook.execute_statement(
-            cluster_identifier=REDSHIFT_CLUSTER_IDENTIFIER,
-            database=REDSHIFT_DATABASE,
-            db_user=REDSHIFT_DATABASE_USER,
-            sql=REDSHIFT_QUERY,
-        )
-        return resp
-
-    @task(task_id="wait_for_results")
-    def wait_for_results_fn(id):
-        """This is a python decorator task that executes a Redshift query"""
-        hook = RedshiftDataHook()
-
-        elapsed = 0
-        while elapsed < TIMEOUT:
-            print("Polling", id)
-            status = hook.describe_statement(
-                id=id,
-            )
-            print(status)
-            if status == 'FINISHED':
-                return status
-            elif status == 'FAILED':
-                raise ValueError(f"RedshiftDataHook.describe_statement {status}")
-            elif status == 'ABORTED':
-                raise ValueError(f"Query {status}")
-            else:
-                print(f"Query {status}")
-            sleep(POLL_INTERVAL)
-            elapsed = elapsed + POLL_INTERVAL
-
-        raise AirflowException("Timeout. The operation could not be completed within the allotted time.")
-
     @task(task_id="output_results")
     def output_results_fn(id):
         """This is a python decorator task that returns a Redshift query"""
@@ -101,16 +62,21 @@ def example_redshift_data():
         print(resp)
         return resp
 
-    # Using a task-decorated function to request the list of tables in a Redshift cluster
-    redshift_query = execute_query_fn()
-
-    # Using a task-decorated function to wait for the Redshift query above
-    redshift_wait = wait_for_results_fn(redshift_query)
+    # Run a SQL statement and wait for completion
+    redshift_query = RedshiftDataOperator(
+        task_id='redshift_query',
+        cluster_identifier=REDSHIFT_CLUSTER_IDENTIFIER,
+        database=REDSHIFT_DATABASE,
+        db_user=REDSHIFT_DATABASE_USER,
+        sql=REDSHIFT_QUERY,
+        timeout=TIMEOUT,
+        poll_interval=POLL_INTERVAL,
+    )
 
     # Using a task-decorated function to output the list of tables in a Redshift cluster
-    redshift_output = output_results_fn(redshift_query)
+    redshift_output = output_results_fn("{{task_instance.xcom_pull('redshift_query', key='return_value')}}")
 
-    redshift_query >> redshift_wait >> redshift_output
+    redshift_query >> redshift_output
 
 
 example_redshift_data_dag = example_redshift_data()

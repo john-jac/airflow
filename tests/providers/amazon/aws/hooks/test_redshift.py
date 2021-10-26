@@ -26,7 +26,7 @@ from parameterized import parameterized
 
 from airflow.models import Connection
 from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
-from airflow.providers.amazon.aws.hooks.redshift import RedshiftDataHook, RedshiftHook, RedshiftSQLHook
+from airflow.providers.amazon.aws.hooks.redshift import RedshiftHook, RedshiftSQLHook
 
 try:
     from moto import mock_redshift
@@ -171,56 +171,3 @@ class TestRedshiftSQLHookConn(unittest.TestCase):
         ):
             self.db_hook.get_conn()
             mock_connect.assert_called_once_with(**expected_call_args)
-
-
-class TestRedshiftDataHook(unittest.TestCase):
-    cluster_identifier = 'test-cluster'
-    database = 'test-database'
-    sql = 'SELECT * FROM test_table'
-    id = '12345-67890'
-    parameters = [{"name": "id", "value": "1"}]
-
-    @mock.patch.object(RedshiftDataHook, 'get_conn')
-    def test_execute_statement(self, mock_client):
-        hook = RedshiftDataHook()
-        result = hook.execute_statement(
-            cluster_identifier=self.cluster_identifier,
-            database=self.database,
-            sql=self.sql,
-        )
-        assert result
-
-    @mock.patch.object(RedshiftDataHook, 'get_conn')
-    def test_execute_statement_with_parameters(self, mock_client):
-        hook = RedshiftDataHook()
-        result = hook.execute_statement(
-            cluster_identifier=self.cluster_identifier,
-            database=self.database,
-            sql=self.sql,
-            parameters=self.parameters,
-        )
-        assert result
-
-    @mock.patch.object(RedshiftDataHook, 'get_conn')
-    def test_describe_statement(self, mock_client):
-        hook = RedshiftDataHook()
-        result = hook.describe_statement(
-            id=id,
-        )
-        assert result
-
-    @mock.patch.object(RedshiftDataHook, 'get_conn')
-    def test_get_statement_result(self, mock_client):
-        hook = RedshiftDataHook()
-        result = hook.get_statement_result(
-            id=id,
-        )
-        assert result
-
-    @mock.patch.object(RedshiftDataHook, 'get_conn')
-    def test_cancel_statement(self, mock_client):
-        hook = RedshiftDataHook()
-        result = hook.cancel_statement(
-            id=id,
-        )
-        assert result
