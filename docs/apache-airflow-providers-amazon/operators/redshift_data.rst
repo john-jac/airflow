@@ -30,6 +30,7 @@ Overview
 Use the :class:`RedshiftDataOperator <airflow.providers.amazon.aws.operators.redshift_data>` to execute
 statements against an Amazon Redshift cluster.
 
+This differs from RedshiftSQLOperator in that it allows users to query and retrieve data via the AWS API and avoid the necessity of a Postgres connection.
 
 example_redshift_data_execute_sql.py
 ------------------------------------

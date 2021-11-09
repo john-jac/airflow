@@ -31,16 +31,26 @@ class RedshiftDataOperator(BaseOperator):
         For more information on how to use this operator, take a look at the guide:
         :ref:`howto/operator:RedshiftDataOperator`
 
-    :param sql: the sql code to be executed
-    :type sql: Can receive a str representing a sql statement,
-        or an iterable of str (sql statements)
-    :param aws_conn_id: AWS connection id (default: aws_default)
-    :type aws_conn_id: str
-    :param parameters: (optional) the parameters to render the SQL query with.
-    :type parameters: dict or iterable
-    :param autocommit: if True, each command is automatically committed.
-        (default value: False)
-    :type autocommit: bool
+    :param cluster_identifier: unique identifier of a cluster
+    :type cluster_identifier: str
+    :param database: the name of the database
+    :type database: str
+    :param sql: the SQL statement text to run
+    :type sql: str
+    :param db_user: the database user name
+    :type db_user: str
+    :param parameters: the parameters for the SQL statement
+    :type parameters: list
+    :param secret_arn: the name or ARN of the secret that enables db access
+    :type secret_arn: str
+    :param statement_name: the name of the SQL statement
+    :type statement_name: str
+    :param with_event: indicates whether to send an event to EventBridge
+    :type with_event: bool
+    :param timeout: how long in seconds to wait for a response, if 0 don't wait
+    :type timeout: int
+    :param poll_interval: how often in seconds to check the query status
+    :type poll_interval: int
     """
 
     template_fields = ('sql',)
@@ -73,7 +83,13 @@ class RedshiftDataOperator(BaseOperator):
         self.statement_name = statement_name
         self.with_event = with_event
         self.timeout = timeout
-        self.poll_interval = poll_interval
+        if poll_interval > 0:
+            self.poll_interval = poll_interval
+        else:
+            self.log.warning(
+                "Invalid poll_interval:",
+                poll_interval,
+            )
 
     def execute_query(self):
         hook = self.get_hook()
@@ -96,10 +112,10 @@ class RedshiftDataOperator(BaseOperator):
         elapsed = 0
         while elapsed < self.timeout:
             self.log.info("Polling", id)
-            status = hook.describe_statement(
+            resp = hook.describe_statement(
                 id=id,
             )
-            print(status)
+            status = resp['Status']
             if status == 'FINISHED':
                 return status
             elif status == 'FAILED':
@@ -123,5 +139,6 @@ class RedshiftDataOperator(BaseOperator):
         """Execute a statement against Amazon Redshift"""
         self.log.info(f"Executing statement: {self.sql}")
         id = self.execute_query()
-        self.wait_for_results(id)
+        if self.timeout > 0:
+            self.wait_for_results(id)
         return id

@@ -74,9 +74,7 @@ def example_redshift_data():
     )
 
     # Using a task-decorated function to output the list of tables in a Redshift cluster
-    redshift_output = output_results_fn("{{task_instance.xcom_pull('redshift_query', key='return_value')}}")
-
-    redshift_query >> redshift_output
+    output_results_fn(redshift_query.output)
 
 
 example_redshift_data_dag = example_redshift_data()

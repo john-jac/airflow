@@ -112,7 +112,7 @@ class RedshiftDataHook(AwsBaseHook):
         response = self.get_conn().describe_statement(
             Id=id,
         )
-        return response['Status']
+        return response
 
     def get_statement_result(
         self,
@@ -149,4 +149,4 @@ class RedshiftDataHook(AwsBaseHook):
         response = self.get_conn().cancel_statement(
             Id=id,
         )
-        return response['Status'] if response['Status'] else None
+        return response
