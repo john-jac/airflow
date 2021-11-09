@@ -55,6 +55,7 @@ class RedshiftDataOperator(BaseOperator):
 
     template_fields = ('sql',)
     template_ext = ('.sql',)
+    template_fields_renderers = {'sql': 'sql'}
 
     def __init__(
         self,

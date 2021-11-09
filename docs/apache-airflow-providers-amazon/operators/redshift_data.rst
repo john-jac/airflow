@@ -38,7 +38,7 @@ example_redshift_data_execute_sql.py
 Purpose
 """""""
 
-This is a basic example dag for using :class:`RedshiftDataOperator <airflow.providers.amazon.aws.operators.redshift_data>`
+This is a basic example DAG for using :class:`RedshiftDataOperator <airflow.providers.amazon.aws.operators.redshift_data>`
 to execute statements against an Amazon Redshift cluster.
 
 List tables in database
