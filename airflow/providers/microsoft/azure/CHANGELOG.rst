@@ -19,6 +19,53 @@
 Changelog
 ---------
 
+3.4.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Remove unnecessary connection form customizations in Azure (#19595)``
+* ``Update Azure modules to comply with AIP-21 (#19431)``
+* ``Remove 'host' from hidden fields in 'WasbHook' (#19475)``
+* ``use DefaultAzureCredential if login not provided for Data Factory (#19079)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix argument error in AzureContainerInstancesOperator (#19668)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Ensure ''catchup=False'' is used in example dags (#19396)``
+
+3.3.0
+.....
+
+Features
+~~~~~~~~
+
+* ``update azure cosmos to latest version (#18695)``
+* ``Added sas_token var to BlobServiceClient return. Updated tests (#19234)``
+* ``Add pre-commit hook for common misspelling check in files (#18964)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix changelog for Azure Provider (#18736)``
+
+Other
+~~~~~
+
+* ``Expanding docs on client auth for AzureKeyVaultBackend (#18659)``
+* ``Static start_date and default arg cleanup for Microsoft providers example DAGs (#19062)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``More f-strings (#18855)``
+   * ``Revert 'update azure cosmos version (#18663)' (#18694)``
+   * ``update azure cosmos version (#18663)``
+
 3.2.0
 .....
 

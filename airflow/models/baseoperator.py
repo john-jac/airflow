@@ -25,6 +25,7 @@ import warnings
 from abc import ABCMeta, abstractmethod
 from datetime import datetime, timedelta
 from inspect import signature
+from types import FunctionType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -46,6 +47,7 @@ from typing import (
 
 import attr
 import jinja2
+import pendulum
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.exc import NoResultFound
@@ -77,6 +79,7 @@ from airflow.utils.trigger_rule import TriggerRule
 from airflow.utils.weight_rule import WeightRule
 
 if TYPE_CHECKING:
+    from airflow.models.dag import DAG
     from airflow.models.xcom_arg import XComArg
     from airflow.utils.task_group import TaskGroup
 
@@ -86,7 +89,7 @@ TaskStateChangeCallback = Callable[[Context], None]
 TaskPreExecuteHook = Callable[[Context], None]
 TaskPostExecuteHook = Callable[[Context, Any], None]
 
-T = TypeVar('T', bound=Callable)
+T = TypeVar('T', bound=FunctionType)
 
 
 class BaseOperatorMeta(abc.ABCMeta):
@@ -241,14 +244,17 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
     :param retries: the number of retries that should be performed before
         failing the task
     :type retries: int
-    :param retry_delay: delay between retries
-    :type retry_delay: datetime.timedelta
-    :param retry_exponential_backoff: allow progressive longer waits between
+    :param retry_delay: delay between retries, can be set as ``timedelta`` or
+        ``float`` seconds, which will be converted into ``timedelta``,
+        the default is ``timedelta(seconds=300)``.
+    :type retry_delay: datetime.timedelta or float
+    :param retry_exponential_backoff: allow progressively longer waits between
         retries by using exponential backoff algorithm on retry delay (delay
         will be converted into seconds)
     :type retry_exponential_backoff: bool
-    :param max_retry_delay: maximum delay interval between retries
-    :type max_retry_delay: datetime.timedelta
+    :param max_retry_delay: maximum delay interval between retries, can be set as
+        ``timedelta`` or ``float`` seconds, which will be converted into ``timedelta``.
+    :type max_retry_delay: datetime.timedelta or float
     :param start_date: The ``start_date`` for the task, determines
         the ``execution_date`` for the first task instance. The best practice
         is to have the start_date rounded
@@ -457,6 +463,7 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
         'retry_exponential_backoff',
         'max_retry_delay',
         'start_date',
+        'end_date',
         'depends_on_past',
         'wait_for_downstream',
         'priority_weight',
@@ -478,6 +485,12 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
     # Set to True before calling execute method
     _lock_for_execution = False
 
+    _dag: Optional["DAG"] = None
+
+    # subdag parameter is only set for SubDagOperator.
+    # Setting it to None by default as other Operators do not have that field
+    subdag: Optional["DAG"] = None
+
     def __init__(
         self,
         task_id: str,
@@ -486,14 +499,14 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
         email_on_retry: bool = conf.getboolean('email', 'default_email_on_retry', fallback=True),
         email_on_failure: bool = conf.getboolean('email', 'default_email_on_failure', fallback=True),
         retries: Optional[int] = conf.getint('core', 'default_task_retries', fallback=0),
-        retry_delay: timedelta = timedelta(seconds=300),
+        retry_delay: Union[timedelta, float] = timedelta(seconds=300),
         retry_exponential_backoff: bool = False,
-        max_retry_delay: Optional[timedelta] = None,
+        max_retry_delay: Optional[Union[timedelta, float]] = None,
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         depends_on_past: bool = False,
         wait_for_downstream: bool = False,
-        dag=None,
+        dag: Optional['DAG'] = None,
         params: Optional[Dict] = None,
         default_args: Optional[Dict] = None,
         priority_weight: int = 1,
@@ -607,7 +620,8 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
         self.pool = Pool.DEFAULT_POOL_NAME if pool is None else pool
         self.pool_slots = pool_slots
         if self.pool_slots < 1:
-            raise AirflowException(f"pool slots for {self.task_id} in dag {dag.dag_id} cannot be less than 1")
+            dag_str = f" in dag {dag.dag_id}" if dag else ""
+            raise ValueError(f"pool slots for {self.task_id}{dag_str} cannot be less than 1")
         self.sla = sla
         self.execution_timeout = execution_timeout
         self.on_execute_callback = on_execute_callback
@@ -631,7 +645,8 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
                 self.log.debug("max_retry_delay isn't a timedelta object, assuming secs")
                 self.max_retry_delay = timedelta(seconds=max_retry_delay)
 
-        self.params = ParamsDict(params)
+        # At execution_time this becomes a normal dict
+        self.params: Union[ParamsDict, dict] = ParamsDict(params)
         if priority_weight is not None and not isinstance(priority_weight, int):
             raise AirflowException(
                 f"`priority_weight` for task '{self.task_id}' only accepts integers, "
@@ -668,15 +683,10 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
         # Private attributes
         self._upstream_task_ids: Set[str] = set()
         self._downstream_task_ids: Set[str] = set()
-        self._dag = None
 
-        self.dag = dag or DagContext.get_current_dag()
-
-        # subdag parameter is only set for SubDagOperator.
-        # Setting it to None by default as other Operators do not have that field
-        from airflow.models.dag import DAG
-
-        self.subdag: Optional[DAG] = None
+        dag = dag or DagContext.get_current_dag()
+        if dag:
+            self.dag = dag
 
         self._log = logging.getLogger("airflow.task.operators")
 
@@ -804,15 +814,15 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
         return self._outlets
 
     @property
-    def dag(self) -> Any:
+    def dag(self) -> 'DAG':
         """Returns the Operator's DAG if set, otherwise raises an error"""
-        if self.has_dag():
+        if self._dag:
             return self._dag
         else:
             raise AirflowException(f'Operator {self} has not been assigned to a DAG yet')
 
     @dag.setter
-    def dag(self, dag: Any):
+    def dag(self, dag: Optional['DAG']):
         """
         Operators can be assigned to one DAG, one time. Repeat assignments to
         that same DAG are ok.
@@ -835,7 +845,7 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
 
     def has_dag(self):
         """Returns True if the Operator has been assigned to a DAG."""
-        return getattr(self, '_dag', None) is not None
+        return self._dag is not None
 
     @property
     def dag_id(self) -> str:
@@ -1296,8 +1306,13 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
         from airflow.models import DagRun
         from airflow.utils.types import DagRunType
 
-        start_date = start_date or self.start_date
-        end_date = end_date or self.end_date or timezone.utcnow()
+        # Assertions for typing -- we need a dag, for this function, and when we have a DAG we are
+        # _guaranteed_ to have start_date (else we couldn't have been added to a DAG)
+        if TYPE_CHECKING:
+            assert self.start_date
+
+        start_date = pendulum.instance(start_date or self.start_date)
+        end_date = pendulum.instance(end_date or self.end_date or timezone.utcnow())
 
         for info in self.dag.iter_dagrun_infos_between(start_date, end_date, align=False):
             ignore_depends_on_past = info.logical_date == start_date and ignore_first_depends_on_past
@@ -1320,7 +1335,7 @@ class BaseOperator(Operator, LoggingMixin, TaskMixin, metaclass=BaseOperatorMeta
                     execution_date=info.logical_date,
                     data_interval=info.data_interval,
                 )
-                ti = TaskInstance(self, run_id=None)
+                ti = TaskInstance(self, run_id=dr.run_id)
                 ti.dag_run = dr
                 session.add(dr)
                 session.flush()

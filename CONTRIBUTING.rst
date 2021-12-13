@@ -936,20 +936,30 @@ you should do:
     if not some_predicate():
         handle_the_case()
 
+The one exception to this is if you need to make an assert for typechecking (which should be almost a last resort) you can do this:
+
+.. code-block:: python
+
+    if TYPE_CHECKING:
+        assert isinstance(x, MyClass)
+
+
 Database Session Handling
 -------------------------
 
 **Explicit is better than implicit.** If a function accepts a ``session`` parameter it should not commit the
 transaction itself. Session management is up to the caller.
 
-To make this easier there is the ``create_session`` helper:
+To make this easier, there is the ``create_session`` helper:
 
 .. code-block:: python
+
+    from sqlalchemy.orm import Session
 
     from airflow.utils.session import create_session
 
 
-    def my_call(*args, session):
+    def my_call(*args, session: Session):
         ...
         # You MUST not commit the session here.
 
@@ -961,13 +971,22 @@ If this function is designed to be called by "end-users" (i.e. DAG authors) then
 
 .. code-block:: python
 
-    from airflow.utils.session import provide_session
+    from sqlalchemy.orm import Session
+
+    from airflow.utils.session import NEW_SESSION, provide_session
 
 
     @provide_session
-    def my_method(arg, session=None):
+    def my_method(arg, *, session: Session = NEW_SESSION):
         ...
         # You SHOULD not commit the session here. The wrapper will take care of commit()/rollback() if exception
+
+In both cases, the ``session`` argument is a `keyword-only argument`_. This is the most preferred form if
+possible, although there are some exceptions in the code base where this cannot be used, due to backward
+compatibility considerations. In most cases, ``session`` argument should be last in the argument list.
+
+.. _`keyword-only argument`: https://www.python.org/dev/peps/pep-3102/
+
 
 Don't use time() for duration calculations
 -----------------------------------------
@@ -1201,11 +1220,25 @@ commands:
 
 .. code-block:: bash
 
-    # Check JS code in .js and .html files, and report any errors/warnings
+    # Check JS code in .js, .jsx, and .html files, and report any errors/warnings
     yarn run lint
 
-    # Check JS code in .js and .html files, report any errors/warnings and fix them if possible
+    # Check JS code in .js, .jsx, and .html files, report any errors/warnings and fix them if possible
     yarn run lint:fix
+
+    # Runs tests for all .test.js and .test.jsx files
+    yarn test
+
+React, JSX and Chakra
+-----------------------------
+
+In order to create a more modern UI, we have started to include [React](https://reactjs.org/) in the ``airflow/www/`` project.
+If you are unfamiliar with React then it is recommended to check out their documentation to understand components and jsx syntax.
+
+We are using [Chakra UI](https://chakra-ui.com/) as a component and styling library. Notably, all styling is done in a theme file or
+inline when defining a component. There are a few shorthand style props like ``px`` instead of ``padding-right, padding-left``.
+To make this work, all Chakra styling and css styling are completely separate. It is best to think of the React components as a separate app
+that lives inside of the main app.
 
 How to sync your fork
 =====================

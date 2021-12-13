@@ -22,6 +22,7 @@ import os
 import shutil
 from datetime import timedelta
 from tempfile import mkdtemp
+from typing import Generator, Optional
 from unittest import mock
 from unittest.mock import MagicMock, patch
 
@@ -37,6 +38,7 @@ from airflow.dag_processing.manager import DagFileProcessorAgent
 from airflow.exceptions import AirflowException
 from airflow.executors.base_executor import BaseExecutor
 from airflow.jobs.backfill_job import BackfillJob
+from airflow.jobs.base_job import BaseJob
 from airflow.jobs.scheduler_job import SchedulerJob
 from airflow.models import DAG, DagBag, DagModel, Pool, TaskInstance
 from airflow.models.dagrun import DagRun
@@ -470,6 +472,40 @@ class TestSchedulerJob:
         assert tis[1].key in res_keys
         assert tis[3].key in res_keys
         session.rollback()
+
+    @pytest.mark.parametrize(
+        "state, total_executed_ti",
+        [
+            (DagRunState.SUCCESS, 0),
+            (DagRunState.FAILED, 0),
+            (DagRunState.RUNNING, 2),
+            (DagRunState.QUEUED, 0),
+        ],
+    )
+    def test_find_executable_task_instances_only_running_dagruns(
+        self, state, total_executed_ti, dag_maker, session
+    ):
+        """Test that only task instances of 'running' dagruns are executed"""
+        dag_id = 'SchedulerJobTest.test_find_executable_task_instances_only_running_dagruns'
+        task_id_1 = 'dummy'
+        task_id_2 = 'dummydummy'
+
+        with dag_maker(dag_id=dag_id, session=session):
+            DummyOperator(task_id=task_id_1)
+            DummyOperator(task_id=task_id_2)
+
+        self.scheduler_job = SchedulerJob(subdir=os.devnull)
+
+        dr = dag_maker.create_dagrun(state=state)
+
+        tis = dr.task_instances
+        for ti in tis:
+            ti.state = State.SCHEDULED
+            session.merge(ti)
+        session.flush()
+        res = self.scheduler_job._executable_task_instances_to_queued(max_tis=32, session=session)
+        session.flush()
+        assert total_executed_ti == len(res)
 
     def test_find_executable_task_instances_order_execution_date(self, dag_maker):
         """
@@ -1273,8 +1309,8 @@ class TestSchedulerJob:
         session.flush()
         session.refresh(dr)
         assert dr.state == State.FAILED
-        # check that next_dagrun has been updated by Schedulerjob._update_dag_next_dagruns
-        assert dag_maker.dag_model.next_dagrun == dr.execution_date + timedelta(days=1)
+        # check that next_dagrun_create_after has been updated by calculate_dagrun_date_fields
+        assert dag_maker.dag_model.next_dagrun_create_after == dr.execution_date + timedelta(days=1)
         # check that no running/queued runs yet
         assert (
             session.query(DagRun).filter(DagRun.state.in_([DagRunState.RUNNING, DagRunState.QUEUED])).count()
@@ -1896,6 +1932,7 @@ class TestSchedulerJob:
 
         def _create_dagruns(dag: DAG):
             next_info = dag.next_dagrun_info(None)
+            assert next_info is not None
             for _ in range(5):
                 yield dag.create_dagrun(
                     run_type=DagRunType.SCHEDULED,
@@ -1904,6 +1941,8 @@ class TestSchedulerJob:
                     state=State.RUNNING,
                 )
                 next_info = dag.next_dagrun_info(next_info.data_interval)
+                if next_info is None:
+                    break
 
         # Create 5 dagruns for each DAG.
         # To increase the chances the TIs from the "full" pool will get retrieved first, we schedule all
@@ -2445,6 +2484,36 @@ class TestSchedulerJob:
         if old_job.processor_agent:
             old_job.processor_agent.end()
 
+    def test_adopt_or_reset_orphaned_tasks_only_fails_scheduler_jobs(self, caplog):
+        """Make sure we only set SchedulerJobs to failed, not all jobs"""
+        session = settings.Session()
+
+        self.scheduler_job = SchedulerJob(subdir=os.devnull)
+        self.scheduler_job.state = State.RUNNING
+        self.scheduler_job.latest_heartbeat = timezone.utcnow()
+        session.add(self.scheduler_job)
+        session.flush()
+
+        old_job = SchedulerJob(subdir=os.devnull)
+        old_job.state = State.RUNNING
+        old_job.latest_heartbeat = timezone.utcnow() - timedelta(minutes=15)
+        session.add(old_job)
+        session.flush()
+
+        old_task_job = BaseJob()  # Imagine it's a LocalTaskJob, but this is easier to provision
+        old_task_job.state = State.RUNNING
+        old_task_job.latest_heartbeat = timezone.utcnow() - timedelta(minutes=15)
+        session.add(old_task_job)
+        session.flush()
+
+        with caplog.at_level('INFO', logger='airflow.jobs.scheduler_job'):
+            self.scheduler_job.adopt_or_reset_orphaned_tasks(session=session)
+        session.expire_all()
+
+        assert old_job.state == State.FAILED
+        assert old_task_job.state == State.RUNNING
+        assert 'Marked 1 SchedulerJob instances as failed' in caplog.messages
+
     def test_send_sla_callbacks_to_processor_sla_disabled(self, dag_maker):
         """Test SLA Callbacks are not sent when check_slas is False"""
         dag_id = 'test_send_sla_callbacks_to_processor_sla_disabled'
@@ -2842,6 +2911,65 @@ class TestSchedulerJob:
             session.query(DagRun).filter(DagRun.state.in_([DagRunState.RUNNING, DagRunState.QUEUED])).count()
             == 0
         )
+
+    def test_max_active_runs_creation_phasing(self, dag_maker, session):
+        """
+        Test that when creating runs once max_active_runs is reached that the runs come in the right order
+        without gaps
+        """
+
+        def complete_one_dagrun():
+            ti = (
+                session.query(TaskInstance)
+                .join(TaskInstance.dag_run)
+                .filter(TaskInstance.state != State.SUCCESS)
+                .order_by(DagRun.execution_date)
+                .first()
+            )
+            if ti:
+                ti.state = State.SUCCESS
+                session.flush()
+
+        with dag_maker(max_active_runs=3, session=session) as dag:
+            # Need to use something that doesn't immediately get marked as success by the scheduler
+            BashOperator(task_id='task', bash_command='true')
+
+        self.scheduler_job = SchedulerJob(subdir=os.devnull)
+        self.scheduler_job.executor = MockExecutor(do_update=True)
+        self.scheduler_job.processor_agent = mock.MagicMock(spec=DagFileProcessorAgent)
+
+        DagModel.dags_needing_dagruns(session).all()
+        for _ in range(3):
+            self.scheduler_job._do_scheduling(session)
+
+        model: DagModel = session.query(DagModel).get(dag.dag_id)
+
+        # Pre-condition
+        assert DagRun.active_runs_of_dags(session=session) == {'test_dag': 3}
+
+        assert model.next_dagrun == timezone.convert_to_utc(
+            timezone.DateTime(
+                2016,
+                1,
+                3,
+            )
+        )
+        assert model.next_dagrun_create_after is None
+
+        complete_one_dagrun()
+
+        assert DagRun.active_runs_of_dags(session=session) == {'test_dag': 3}
+
+        for _ in range(5):
+            self.scheduler_job._do_scheduling(session)
+            complete_one_dagrun()
+            model: DagModel = session.query(DagModel).get(dag.dag_id)
+
+        expected_execution_dates = [datetime.datetime(2016, 1, d, tzinfo=timezone.utc) for d in range(1, 6)]
+        dagrun_execution_dates = [
+            dr.execution_date for dr in session.query(DagRun).order_by(DagRun.execution_date).all()
+        ]
+        assert dagrun_execution_dates == expected_execution_dates
 
     def test_do_schedule_max_active_runs_and_manual_trigger(self, dag_maker):
         """
@@ -3345,6 +3473,8 @@ class TestSchedulerJobQueriesCount:
     made that affects the performance of the SchedulerJob.
     """
 
+    scheduler_job: Optional[SchedulerJob]
+
     @staticmethod
     def clean_db():
         clear_db_runs()
@@ -3356,7 +3486,7 @@ class TestSchedulerJobQueriesCount:
         clear_db_serialized_dags()
 
     @pytest.fixture(autouse=True)
-    def per_test(self) -> None:
+    def per_test(self) -> Generator:
         self.clean_db()
 
         yield

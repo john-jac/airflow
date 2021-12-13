@@ -77,6 +77,7 @@ of default parameters that we can use when creating tasks.
 
 .. exampleinclude:: /../../airflow/example_dags/tutorial.py
     :language: python
+    :dedent: 4
     :start-after: [START default_args]
     :end-before: [END default_args]
 
@@ -373,11 +374,11 @@ Lets look at another example; we need to get some data from a file which is host
 
 Initial setup
 ''''''''''''''''''''
-We need to have docker and postgres installed.
+We need to have Docker and Postgres installed.
 We will be using this `docker file <https://airflow.apache.org/docs/apache-airflow/stable/start/docker.html#docker-compose-yaml>`_
 Follow the instructions properly to set up Airflow.
 
-Create a Employee table in postgres using this:
+Create a Employee table in Postgres using this:
 
 .. code-block:: sql
 
@@ -399,7 +400,7 @@ Create a Employee table in postgres using this:
       "Leave" INTEGER
   );
 
-We also need to add a connection to postgres. Go to the UI and click "Admin" >> "Connections". Specify the following for each field:
+We also need to add a connection to Postgres. Go to the UI and click "Admin" >> "Connections". Specify the following for each field:
 
 - Conn id: LOCAL
 - Conn Type: postgres
@@ -415,10 +416,9 @@ Let's break this down into 2 steps: get data & merge data:
 
 .. code-block:: python
 
-  from airflow.decorators import dag, task
-  from airflow.hooks.postgres import PostgresHook
-  from datetime import datetime, timedelta
   import requests
+  from airflow.decorators import task
+  from airflow.hooks.postgres import PostgresHook
 
 
   @task
@@ -446,6 +446,10 @@ Let's break this down into 2 steps: get data & merge data:
 Here we are passing a ``GET`` request to get the data from the URL and save it in ``employees.csv`` file on our Airflow instance and we are dumping the file into a temporary table before merging the data to the final employees table.
 
 .. code-block:: python
+
+  from airflow.decorators import task
+  from airflow.providers.postgres.hooks.postgres import PostgresHook
+
 
   @task
   def merge_data():
@@ -475,15 +479,17 @@ Lets look at our DAG:
 
 .. code-block:: python
 
-  from airflow.decorators import dag, task
-  from airflow.hooks.postgres_hook import PostgresHook
   from datetime import datetime, timedelta
+
   import requests
+  from airflow.decorators import dag, task
+  from airflow.hooks.postgres import PostgresHook
 
 
   @dag(
       schedule_interval="0 0 * * *",
-      start_date=datetime.today() - timedelta(days=2),
+      start_date=datetime(2021, 1, 1),
+      catchup=False,
       dagrun_timeout=timedelta(minutes=60),
   )
   def Etl():
