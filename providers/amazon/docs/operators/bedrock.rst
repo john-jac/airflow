@@ -382,6 +382,20 @@ To delete an Amazon Bedrock guardrail, use
     :end-before: [END howto_operator_bedrock_delete_guardrail]
 
 
+.. _howto/operator:BedrockUpdateGuardrailOperator:
+
+Update a Guardrail
+------------------
+
+To update an Amazon Bedrock guardrail configuration, use
+:class:`~airflow.providers.amazon.aws.operators.bedrock.BedrockUpdateGuardrailOperator`.
+
+.. exampleinclude:: /../../amazon/tests/system/amazon/aws/example_bedrock_guardrail.py
+    :language: python
+    :dedent: 4
+    :start-after: [START howto_operator_bedrock_update_guardrail]
+    :end-before: [END howto_operator_bedrock_update_guardrail]
+
 Reference
 ---------
 
